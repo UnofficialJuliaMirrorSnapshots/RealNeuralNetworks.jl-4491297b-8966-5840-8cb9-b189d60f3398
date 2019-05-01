@@ -36,6 +36,8 @@ function Neuron(nodeNet::NodeNet{T}) where T
     # the properties from nodeNet
     nodes = NodeNets.get_node_list(nodeNet)
     radii = NodeNets.get_radii(nodeNet)
+    # TO-DO: add node class information
+    #nodeClassList = NodeNets.get_node_class_list(nodeNet)
     # flags labeling whether this node was collected to the net
     collectedFlagVec = falses(length(nodes))
     # connectivity matrix of nodes in nodeNet 
@@ -418,6 +420,9 @@ function get_edge_list( self::Neuron )
     edgeList 
 end 
 
+function get_edge_num(self::Neuron)
+    length( get_edge_list(self) )
+end 
 
 function get_path_to_soma_length(self::Neuron{T}, synapse::Synapse{T}) where T
     mergingSegmentId, closestNodeId = find_closest_node( self, synapse )
@@ -452,12 +457,20 @@ end
 get_path_to_root_length = get_path_to_soma_length 
 
 function get_pre_synapse_to_soma_path_length_list(self::Neuron{T}; 
-                        segmentList::Vector=get_segment_list(self),
+                        segmentList::Vector{Segment{T}}=get_segment_list(self),
                         segmentPathLengthList::Vector{T}=get_segment_path_length_list(self)) where T
     preSynapseToSomaPathLengthList = Vector{T}()
     for (segmentId, segment) in enumerate( segmentList )
         preSynapseList = Segments.get_pre_synapse_list( segment )
-        nodeIdList, _ = findnz( preSynapseList )
+
+        # get the node IDs with synapses attached
+        nodeIdList = Int[]
+        for (i,synapses) in enumerate(preSynapseList)
+            if !ismissing(synapses)
+                push!(nodeIdList, i)
+            end
+        end
+
         pathToSomaLengthList = map(nodeId->get_path_to_soma_length(self, segmentId; 
                                     segmentList=segmentList,
                                     segmentPathLengthList=segmentPathLengthList,
@@ -468,12 +481,20 @@ function get_pre_synapse_to_soma_path_length_list(self::Neuron{T};
 end 
 
 function get_post_synapse_to_soma_path_length_list(self::Neuron{T}; 
-                        segmentList::Vector=get_segment_list(self),
+                        segmentList::Vector{Segment{T}}=get_segment_list(self),
                         segmentPathLengthList::Vector{T}=get_segment_path_length_list(self)) where T
     postSynapseToSomaPathLengthList = Vector{T}()
     for (segmentId, segment) in enumerate( segmentList )
         postSynapseList = Segments.get_post_synapse_list( segment )
-        nodeIdList, _ = findnz( postSynapseList )
+
+        # get the node IDs with synapses attached
+        nodeIdList = Int[]
+        for (i,synapses) in enumerate(postSynapseList)
+            if !ismissing(synapses)
+                push!(nodeIdList, i)
+            end
+        end
+
         pathToSomaLengthList = map(nodeId->get_path_to_soma_length(self, segmentId; 
                                     segmentList=segmentList,
                                     segmentPathLengthList=segmentPathLengthList,
@@ -1545,48 +1566,59 @@ reference:
 https://github.com/seung-lab/neuroglancer/wiki/Skeletons
 """
 function get_neuroglancer_precomputed(self::Neuron)
+    node_list = get_node_list(self)
+    edge_list = get_edge_list(self)
+
     # total number of bytes
-    num_bytes = 4 + 4 + 4*3*get_node_num(self) + 4*2*length(get_edge_num(self))
-    buffer = IOBuffer( num_bytes )
+    num_bytes = 4 + 4 + 4*3*length(node_list) + 4*2*length(edge_list)
+    buffer = IOBuffer( read=false, write=true, maxsize=num_bytes )
+
     # write the number of vertex
-    write(buffer, UInt32(get_node_num(self)))
-    write(buffer, UInt32(get_edge_num(self)))
+    write(buffer, UInt32(length(node_list)))
+    write(buffer, UInt32(length(edge_list)))
     # write the node coordinates
-    for node in get_node_list(self)
-        write(buffer, [node[1:3]...])
+    for node in node_list
+        write(buffer, node[1])
+        write(buffer, node[2])
+        write(buffer, node[3])
     end 
-    for edge in get_edges( self )
-        write(buffer, UInt32( edge[1] ))
-        write(buffer, UInt32( edge[2] ))
+    for edge in edge_list
+        write(buffer, UInt32( edge[1] - 1 ))
+        write(buffer, UInt32( edge[2] - 1 ))
     end
-    #bin = Vector{UInt8}(takebuf_array(buffer))
     bin = Vector{UInt8}(take!(buffer))
     close(buffer)
     return bin 
 end
 
 """
-return all the post synapses in a list 
+return all the pre synapses in a list 
 """
-function get_all_pre_synapse_list(self::Neuron)
-    ret = Vector{Synapse}()
+function get_all_pre_synapse_list(self::Neuron{T}) where T
+    ret = Synapse{T}[]
     for segment in self 
-        preSynapseSparseVec = Segments.get_pre_synapse_sparse_vec(segment)
-        I, synapseList = findnz(preSynapseSparseVec)
-        append!(ret, synapseList)
+        preSynapseList = Segments.get_pre_synapse_list(segment)
+        for synapse in preSynapseList
+            if !ismissing(synapse)
+                append!(ret, synapse)
+            end
+        end
     end
     ret 
 end 
 
 """
-return all the pre synapses in a list 
+return all the post synapses in a list 
 """
-function get_all_post_synapse_list(self::Neuron)
-    ret = Vector{Synapse}()
+function get_all_post_synapse_list(self::Neuron{T}) where T
+    ret = Synapse{T}[]
     for segment in self 
-        postSynapseSparseVec = Segments.get_post_synapse_sparse_vec(segment)
-        I, synapseList = findnz(postSynapseSparseVec)
-        append!(ret, synapseList)
+        postSynapseList = Segments.get_post_synapse_list(segment)
+        for synapse in postSynapseList
+            if !ismissing(synapse)
+                append!(ret, synapse)
+            end
+        end
     end
     ret 
 end 
@@ -1610,10 +1642,10 @@ end
 ############################### manipulations ##########################################
 
 """
-    attach_pre_synapses!(self::Neuron, synapseList::Vector{Synapse})
+    attach_pre_synapses!(self::Neuron{T}, synapseList::Vector{Synapse{T}})
 
 """
-function attach_pre_synapses!(self::Neuron, synapseList::Vector{Synapse})
+function attach_pre_synapses!(self::Neuron{T}, synapseList::Vector{Synapse{T}}) where T
     kdTree, nodePosition = build_tree_with_position(self)
     for synapse in synapseList 
         attach_pre_synapse!(self, synapse, kdTree, nodePosition)
@@ -1631,9 +1663,9 @@ function attach_pre_synapses!(self::Neuron, synapseList::Vector{Synapse})
 end
 
 """
-    attach_post_synapses!(self::Neuron, synapseList::Vector{Synapse})
+    attach_post_synapses!(self::Neuron{T}, synapseList::Vector{Synapse{T}})
 """
-function attach_post_synapses!(self::Neuron, synapseList::Vector{Synapse})
+function attach_post_synapses!(self::Neuron{T}, synapseList::Vector{Synapse{T}}) where T
     kdTree, nodePosition = build_tree_with_position(self)
     for synapse in synapseList 
         attach_post_synapse!(self, synapse, kdTree, nodePosition)
