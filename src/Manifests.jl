@@ -83,7 +83,7 @@ build point cloud and dbf when iterating the chunks
 function trace(self::Manifest)
     println("extract point clouds and distance from boundary fields ...")
     
-    pointCloudDBFList = pmap(x->_get_point_cloud_dbf(self, x), self.rangeList )
+    pointCloudDBFList = map(x->_get_point_cloud_dbf(self, x), self.rangeList )
 
     pointClouds = map( x->x[1], pointCloudDBFList )
     pointCloud = vcat(pointClouds ...)
@@ -96,7 +96,7 @@ function trace(self::Manifest)
     return nodeNet
 end 
 
-function _get_point_cloud_dbf(self::Manifest, ranges)
+function _get_point_cloud_dbf(self::Manifest, ranges::Vector)
     # example: [2456:2968, 1776:2288, 16400:16912]
     offset = (map(x-> UInt32(x.start-1), ranges)...,)
     seg = self.ba[ranges...] |> parent
