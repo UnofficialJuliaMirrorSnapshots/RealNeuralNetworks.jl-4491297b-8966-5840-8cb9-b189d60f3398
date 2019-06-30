@@ -17,6 +17,7 @@ const DENDRITE_CLASS = UInt8(3)
 const SOMA_CLASS = one(UInt8)
 const UNDEFINED_CLASS = zero(UInt8)
 
+
 export Segment 
 mutable struct Segment{T}  
     # list of tuple (x,y,z,r)
@@ -49,14 +50,15 @@ end
 aggregate features to a named tuple 
 """
 function get_features(self::Segment)
-    (pathLength=get_path_length(self), 
-        surfaceArea=get_surface_area(self), 
+    (pathLength=get_path_length(self),
+        surfaceArea=get_surface_area(self),
         volume=get_volume(self),
         meanRadius=mean(get_radius_list(self)),
         stdRadius=std(get_radius_list(self)),
+        tortuosity=get_tortuosity(self),
         numPreSynapses=get_num_pre_synapses(self),
         numPostSynapses=get_num_post_synapses(self),
-        tortuosity=get_tortuosity(self))
+        likeFirstAxon=like_first_axon(self))
 end  
 
 """
@@ -71,10 +73,106 @@ end
 @inline function get_connectivity_matrix( self::Segment ) self.connectivityMatrix end 
 @inline function get_bounding_box( self::Segment ) BoundingBox(get_node_list(self)) end 
 @inline function get_class( self::Segment ) self.class end 
-@inline function get_pre_synapse_list( self::Segment ) self.preSynapseList end 
-@inline function get_post_synapse_list( self::Segment ) self.postSynapseList end
+
+function get_synapse_list(self::SynapseList)
+    ret = Synapse{Float32}[]
+    for synapses in self
+        if !ismissing(synapses)
+            for synapse in synapses
+                push!(ret, synapse)
+            end
+        end
+    end
+    ret
+
+end
+
+@inline function get_pre_synapse_list( self::Segment{T} ) where T 
+    get_synapse_list(self.preSynapseList) 
+end 
+
+@inline function get_post_synapse_list( self::Segment{T} ) where T
+    get_synapse_list(self.postSynapseList)
+end 
+
 @inline function get_pre_synapse( self::Segment, index::Int ) self.preSynapseList[index] end
 @inline function get_post_synapse( self::Segment, index::Int ) self.postSynapseList[index] end
+
+@inline function get_num_pre_synapses(self::Segment)
+    get_pre_synapse_list(self) |> length
+end 
+
+@inline function get_num_post_synapses(self::Segment)
+    get_post_synapse_list(self) |> length
+end 
+
+"""
+    get_pre_synapse_density(self::Segment)
+note that the unit is # / micron 
+"""
+@inline function get_pre_synapse_density(self::Segment)
+    numPreSynapses = get_num_pre_synapses(self)
+    pathLength = get_path_length(self)
+    numPreSynapses / pathLength * 1000
+end 
+
+"""
+    get_post_synapse_density(self::Segment)
+note that the unit is # / micron 
+"""
+@inline function get_post_synapse_density(self::Segment)
+    numPostSynapses = get_num_post_synapses(self)
+    pathLength = get_path_length(self)
+    numPostSynapses / pathLength * 1000
+end 
+
+"""
+    get_central_pre_synapse_num(self::Segment{T}) where T
+
+some axons in zebrafish start with some post synapses which is a great confusion of 
+segment type classification. only considering the central part should benefit the classification.
+"""
+function get_central_pre_synapse_num(self::Segment{T}; 
+                                        start::Float64=0.2, stop::Float64=0.8) where T
+    @assert start < stop
+    @assert start>0 && stop<1
+    start = max(1, round(Int, start * length(self)))
+    stop = min(length(self), round(Int, length(self)*stop))
+    self.preSynapseList[start:stop] |> get_synapse_list |> length
+end
+
+function get_central_post_synapse_num(self::Segment{T}; 
+                                        start::Float64=0.2, stop::Float64=0.8) where T
+    @assert start < stop
+    @assert start>=0. && stop<=1.
+    start = max(1, round(Int, start * length(self)))
+    stop = min(length(self), round(Int, length(self)*stop))
+    self.postSynapseList[start:stop] |> get_synapse_list |> length
+end
+
+"""
+    like_first_axon(self::Segment{T}; ratio::AbstractFloat=0.3) where T 
+
+first axon might have a few postsynapses at the starting part.
+"""
+function like_first_axon(self::Segment{T}; ratio::AbstractFloat=0.3) where T 
+    @assert ratio>=0 && ratio<=1
+
+    synNum11 = get_central_post_synapse_num(self; start=0., stop=ratio)
+    synNum12 = get_central_post_synapse_num(self; start=ratio, stop=1.)
+    if synNum11 > 1 && synNum12==0
+        return true
+    end
+
+    synNum21 = get_central_post_synapse_num(self; start=0.0, stop=1.0-ratio)
+    synNum22 = get_central_post_synapse_num(self; start=1.0-ratio, stop=1.0)
+    if synNum21==0 && synNum22>1
+        return true
+    end 
+    false
+end
+
+@inline function set_class(self::Segment, class::UInt8) self.class=class end
 
 @inline function get_bounding_box_distance(self::Segment, point::Union{Tuple, Vector})
     @assert length(point) >= 3
@@ -98,50 +196,6 @@ accumulate the euclidean distance between neighboring nodes
     end
     ret
 end
-
-@inline function get_num_pre_synapses(self::Segment)
-    synapseList = get_pre_synapse_list(self)
-    n = 0
-    for synapses in synapseList
-        if !ismissing(synapses)
-            # there exists some synapses
-            n += length(synapses)
-        end
-    end
-    return n
-end 
-
-@inline function get_num_post_synapses(self::Segment)
-    synapseList = get_post_synapse_list(self)
-    n = 0
-    for synapses in synapseList
-        if !ismissing(synapses)
-            # there exists some synapses
-            n += length(synapses)
-        end
-    end
-    return n
-end 
-
-"""
-    get_pre_synapse_density(self::Segment)
-note that the unit is # / micron 
-"""
-@inline function get_pre_synapse_density(self::Segment)
-    numPreSynapses = get_num_pre_synapses(self)
-    pathLength = get_path_length(self)
-    numPreSynapses / pathLength * 1000
-end 
-
-"""
-    get_post_synapse_density(self::Segment)
-note that the unit is # / micron 
-"""
-@inline function get_post_synapse_density(self::Segment)
-    numPostSynapses = get_num_post_synapses(self)
-    pathLength = get_path_length(self)
-    numPostSynapses / pathLength * 1000
-end 
 
 
 @inline function get_radius_list( self::Segment ) map(n->n[4], self) end 
@@ -215,6 +269,7 @@ end
 @inline function get_center(self::Segment, range::UnitRange)
     center = get_center( self[range] )
 end 
+
 
 ###################### Base functions ################
 
