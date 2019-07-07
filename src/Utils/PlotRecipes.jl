@@ -1,15 +1,17 @@
 module PlotRecipes
 
+import PyPlot
+PyPlot.svg(true)
+using Plots
+using Statistics 
+#using Plotly
+using PlotlyJS
+using Clustering
+using SparseArrays
+
 using RealNeuralNetworks.Neurons
 using RealNeuralNetworks.Neurons.Segments
 using RealNeuralNetworks.Neurons.Segments.Synapses
-using Colors, ColorSchemes, Clustering
-using Plots
-using Statistics 
-using Plotly
-
-import PyPlot
-PyPlot.svg(true)
 
 function plot_synapse_distributions( cellList;  
         synapseDistribution = map(get_synapse_to_soma_path_length_lists, cellList),
@@ -37,23 +39,37 @@ function reorder_distance_matrix(distanceMatrix::Array, clust::Hclust)
 		for (j, o2) in enumerate(clust.order)
 			reorderedDistanceMatrix[i,j] = distanceMatrix[o1,o2]
 		end 
-	end 
+    end
 	reorderedDistanceMatrix
 end 
 
-function coloring(dm)
-    img = Array{RGB{Float64}}(size(dm))
-    for i in eachindex(dm)
-        img[i] = get(ColorSchemes.jet, dm[i])
-    end 
-    img
-end 
+function plot_connectivity_matrix(orderedConnMatrix::SparseMatrixCSC{T}; 
+                                    title="connectivity matrix",
+                                    max_size::Real=10) where T
+    X,Y,V = SparseArrays.findnz(orderedConnMatrix)
+    # transform to float and normalize to max_size
+    V = Float32.(V)
+    V ./= maximum(V) / Float32(max_size)
+
+    trace = PlotlyJS.scatter(; x=X, y=Y, 
+        mode="markers", 
+        marker=attr(size=V, line_width=0, opacity=0.4))
+    data = [trace,]
+
+    layout = Layout(; title=title,
+        width=800,
+        height=800,
+        xaxis = attr(title="presynapse", range=(1, size(orderedConnMatrix,1))),
+        yaxis= attr(title="postsynapse", range=(1, size(orderedConnMatrix,2)))
+    )
+    return PlotlyJS.plot(data, layout)
+end
 
 function plot(neuron::Neuron; nodeStep::Integer=10, semantic::Bool=true, showSynapse::Bool=true)
-    traces = Plotly.GenericTrace[]
+    traces = PlotlyJS.GenericTrace[]
     # plot soma
     root = Neurons.get_root_node(neuron)
-    root_trace = Plotly.scatter3d(;x=[root[1]], y=[root[2]], z=[root[3]], 
+    root_trace = PlotlyJS.scatter3d(;x=[root[1]], y=[root[2]], z=[root[3]], 
                                     mode="markers", marker_size=7)
     push!(traces, root_trace)
 
@@ -71,22 +87,22 @@ function plot(neuron::Neuron; nodeStep::Integer=10, semantic::Bool=true, showSyn
             else
                 color = "rgb(127,127,127)"
             end
-            segmentTrace = Plotly.scatter3d(;x=x,y=y,z=z, mode="lines", 
+            segmentTrace = PlotlyJS.scatter3d(;x=x,y=y,z=z, mode="lines", 
                                                 line_color=color)
         else
-            segmentTrace = Plotly.scatter3d(;x=x,y=y,z=z, mode="lines")
+            segmentTrace = PlotlyJS.scatter3d(;x=x,y=y,z=z, mode="lines")
         end
         push!(traces, segmentTrace)
 
         if showSynapse
-            preSynapseList = Neurons.Segments.get_pre_synapse_list(segment)
-            postSynapseList = Neurons.Segments.get_post_synapse_list(segment)
-            preTrace = Plotly.scatter3d(; 
+            preSynapseList = Neurons.Segments.concatenate_pre_synapses(segment)
+            postSynapseList = Neurons.Segments.concatenate_post_synapses(segment)
+            preTrace = PlotlyJS.scatter3d(; 
                                 x=map(c->Synapses.get_psd_coordinate(c)[1], preSynapseList),
                                 y=map(c->Synapses.get_psd_coordinate(c)[2], preSynapseList),
                                 z=map(c->Synapses.get_psd_coordinate(c)[3], preSynapseList),
                                 mode="markers", marker_color="rgb(179,66,244)", marker_size=2)
-            postTrace = Plotly.scatter3d(; 
+            postTrace = PlotlyJS.scatter3d(; 
                                 x=map(c->Synapses.get_psd_coordinate(c)[1], postSynapseList),
                                 y=map(c->Synapses.get_psd_coordinate(c)[2], postSynapseList),
                                 z=map(c->Synapses.get_psd_coordinate(c)[3], postSynapseList),
@@ -95,8 +111,8 @@ function plot(neuron::Neuron; nodeStep::Integer=10, semantic::Bool=true, showSyn
             push!(traces, postTrace)
         end
     end
-    layout = Plotly.Layout(; showlegend=false)
-    Plotly.plot(traces, layout)
+    layout = PlotlyJS.Layout(; showlegend=false)
+    PlotlyJS.plot(traces, layout)
 end 
 
 function plot_v2(neuron::Neuron; nodeStep::Integer=10)
